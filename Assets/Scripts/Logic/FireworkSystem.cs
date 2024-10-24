@@ -5,18 +5,21 @@ using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Transforms;
 using UnityEngine;
+using Random = Unity.Mathematics.Random;
 
 namespace Logic
 {
     public partial struct FireworkSystem : ISystem
     {
-        private NativeList<NativeArray<float3>> _arrays;
+        private NativeList<NativeArray<float3>> _float3Arrays;
+        private NativeList<NativeArray<float>> _floatArrays;
         private float Delay;
 
         public void OnCreate(ref SystemState state)
         {
             state.RequireForUpdate<PrefabHolder>();
-            _arrays = new NativeList<NativeArray<float3>>(Allocator.Persistent);
+            _float3Arrays = new NativeList<NativeArray<float3>>(Allocator.Persistent);
+            _floatArrays = new NativeList<NativeArray<float>>(Allocator.Persistent);
         }
 
         [BurstCompile]
@@ -60,7 +63,11 @@ namespace Logic
                 coreInstruction >>= 16;
 
                 var isEndStep = maxTime > keepSpawningCheck;
-                if (!isEndStep)
+                if (isEndStep)
+                {
+                    lifetime *= 2f;
+                }
+                else
                 {
                     particleQueue.Enqueue((currentParticle, endTime));
                     if (doubleParticle)
@@ -80,13 +87,103 @@ namespace Logic
                 var particleCount = (int)math.lerp(minParticles, maxParticles, particleLerp);
 
 
-                var is3d = particleCountInstruction % 8 == 0;
+                var is3d = particleCountInstruction % 4 == 0;
                 if (isEndStep)
                 {
                     particleCount *= is3d ? 10 : 2;
                 }
+                else if (is3d && !willSpawnBigPattern)
+                {
+                    particleCount *= 2;
+                }
 
-                var patternOffset = NextInstruction(instructions, ref instructionIndex) / (float)0xFFFFFFFF;
+                var patternInstruction = NextInstruction(instructions, ref instructionIndex);
+                var patternOffset = patternInstruction / (float)0xFFFFFFFF;
+
+                var pattern = is3d ? Create3dPattern(particleCount, patternOffset) : Create2dPattern(particleCount, patternOffset);
+
+                NativeArray<float> speedMultiplier = default;
+                NativeArray<float> lifetimeMultiplier = default;
+
+                var alterSpeed = patternInstruction % 16;
+                var randomLife = (patternInstruction >> 4) % 4 == 3;
+
+                if (alterSpeed < 4)
+                {
+                    speedMultiplier = new NativeArray<float>(pattern.Length, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+                    _floatArrays.Add(speedMultiplier);
+                    switch (alterSpeed)
+                    {
+                        case 0: // Square
+                            for (var i = 0; i < speedMultiplier.Length; i++)
+                            {
+                                var abs = math.abs(pattern[i]);
+                                speedMultiplier[i] = 1 / math.cmax(abs);
+                            }
+
+                            break;
+                        case 1: // Clover
+                            for (var i = 0; i < speedMultiplier.Length; i++)
+                            {
+                                var abs = math.abs(pattern[i]);
+                                speedMultiplier[i] = math.cmax(abs);
+                            }
+
+                            break;
+                        case 2: // Leaves
+                            for (var i = 0; i < speedMultiplier.Length; i++)
+                            {
+                                var abs = math.abs(pattern[i]);
+                                speedMultiplier[i] = math.cmin(abs);
+                            }
+
+                            break;
+                        case 3: // Star
+                            for (var i = 0; i < speedMultiplier.Length; i++)
+                            {
+                                var t = math.asin(pattern[i].y) * 1.5f;
+                                var v = new float2(math.sin(t), math.cos(t));
+                                var max = 1 / math.cmax(math.abs(v));
+                                speedMultiplier[i] = max * max;
+                            }
+
+                            break;
+                    }
+
+                    var zeroes = 0;
+                    for (var i = 0; i < speedMultiplier.Length; i++)
+                    {
+                        if (speedMultiplier[i] == 0) zeroes++;
+                    }
+
+                    if (zeroes > speedMultiplier.Length - 4)
+                    {
+                        var seed = NextInstruction(instructions, ref instructionIndex);
+                        if (seed == 0) seed = 1;
+                        var rand = new Random(seed);
+
+                        for (var i = 0; i < speedMultiplier.Length; i++)
+                        {
+                            speedMultiplier[i] = rand.NextFloat(0.8f, 1.2f);
+                        }
+                    }
+                }
+
+
+                if (randomLife)
+                {
+                    lifetimeMultiplier = new NativeArray<float>(pattern.Length, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+                    _floatArrays.Add(lifetimeMultiplier);
+
+                    var seed = NextInstruction(instructions, ref instructionIndex);
+                    if (seed == 0) seed = 1;
+                    var rand = new Random(seed);
+                    for (var i = 0; i < pattern.Length; i++)
+                    {
+                        lifetimeMultiplier[i] = rand.NextFloat(0.8f, 1.2f);
+                    }
+                }
+
 
                 state.EntityManager.SetSharedComponent(
                     parentParticle,
@@ -94,7 +191,9 @@ namespace Logic
                     {
                         Prefab1 = currentParticle,
                         Prefab2 = doubleParticle ? otherParticle : currentParticle,
-                        SpawnDirections = is3d ? Create3dPattern(particleCount, patternOffset) : Create2dPattern(particleCount, patternOffset),
+                        SpawnDirections = pattern,
+                        SpeedMultiplier = speedMultiplier,
+                        LifetimeMultiplier = lifetimeMultiplier,
                     }
                 );
 
@@ -193,7 +292,7 @@ namespace Logic
         private float3 RandomDir(NativeArray<FireworkInstruction> instructions, ref int instructionIndex)
         {
             var instruction = NextInstruction(instructions, ref instructionIndex);
-            var r = math.PI * 2 * ((float)instruction) / 0xFFFFFFFF;
+            var r = math.PI * 2 * instruction / 0xFFFFFFFF;
             return new float3(
                 math.sin(r),
                 math.cos(r),
@@ -243,7 +342,16 @@ namespace Logic
             state.EntityManager.AddComponent<ParticleTimer>(particle);
             state.EntityManager.AddComponent<ParticleDirection>(particle);
             state.EntityManager.AddComponent<ParticleSpeed>(particle);
-            state.EntityManager.AddSharedComponent(particle, new SpawnData {Prefab1 = Entity.Null, Prefab2 = Entity.Null, SpawnDirections = default});
+            state.EntityManager.AddSharedComponent(
+                particle,
+                new SpawnData
+                {
+                    Prefab1 = Entity.Null, Prefab2 = Entity.Null,
+                    SpawnDirections = default,
+                    LifetimeMultiplier = default,
+                    SpeedMultiplier = default,
+                }
+            );
             return particle;
         }
 
@@ -258,7 +366,7 @@ namespace Logic
                 array[i] = new float3(x, y, 0);
             }
 
-            _arrays.Add(array);
+            _float3Arrays.Add(array);
             return array;
         }
 
@@ -277,19 +385,19 @@ namespace Logic
                 array[i] = new float3(x, y, z);
             }
 
-            _arrays.Add(array);
+            _float3Arrays.Add(array);
             return array;
         }
 
         [BurstCompile]
         public void OnDestroy(ref SystemState state)
         {
-            for (var i = 0; i < _arrays.Length; i++)
+            for (var i = 0; i < _float3Arrays.Length; i++)
             {
-                _arrays[i].Dispose();
+                _float3Arrays[i].Dispose();
             }
 
-            _arrays.Dispose();
+            _float3Arrays.Dispose();
         }
     }
 }

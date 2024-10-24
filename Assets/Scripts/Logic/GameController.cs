@@ -10,7 +10,7 @@ namespace Logic
     public class GameController : MonoBehaviour
     {
         private bool _isPlaying;
-        private static string _text = "Hello World! Type something here and press \"Start SimuIation\"! The Ionger you write the more will happen! The Ionger the text, the more cool stuff might happen, so feel free to paste the first verse of your favourite song or something. Some specific chains might cause lots of lag, so remember to copy the text *before* starting simulation.";
+        private static string _text = "Hello World! Type something here and press \"Start Simulation\"! The longer you write the more will happen! The longer the text, the more cool stuff might happen, so feel free to paste the first verse of your favourite song or something. NB: Might cause major lag!   ";
         private static float Zoom = -40f;
 
         private static float speedUntouchedFor = 0f;
