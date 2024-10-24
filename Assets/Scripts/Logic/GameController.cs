@@ -17,6 +17,7 @@ namespace Logic
         private static float Zoom = -40f;
 
         private static float speedUntouchedFor = 0f;
+        private float _guiScale;
 
         private static string[] _randomTexts = new[]
         {
@@ -45,6 +46,11 @@ namespace Logic
             cam.transform.position = new Vector3(0, 0, Zoom);
         }
 
+        private void Update()
+        {
+            _guiScale = math.cmin(new float2(Screen.width, Screen.height) / new float2(1920, 1080));
+        }
+
         private void OnGUI()
         {
             GUILayout.BeginArea(new Rect(10, 10, 500, 200));
@@ -54,8 +60,9 @@ namespace Logic
 
         private void DoGUI()
         {
+            GUI.matrix = Matrix4x4.TRS(Vector3.zero, Quaternion.identity, new Vector3(_guiScale, _guiScale, _guiScale));
             GUILayout.BeginHorizontal();
-            if(Time.timeScale <= 0) GUI.color = Color.red;
+            if (Time.timeScale <= 0) GUI.color = Color.red;
             GUILayout.Label($"TimeScale: {Mathf.Round(Time.timeScale * 10) / 10}");
             GUI.color = Color.white;
             var oldTimescale = Time.timeScale;
