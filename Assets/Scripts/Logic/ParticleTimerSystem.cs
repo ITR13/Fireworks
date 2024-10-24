@@ -2,6 +2,7 @@ using Data;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
+using Unity.Transforms;
 
 namespace Logic
 {
@@ -26,7 +27,7 @@ namespace Logic
             state.CompleteDependency();
             var ecb = SystemAPI.GetSingleton<EndFixedStepSimulationEntityCommandBufferSystem.Singleton>().CreateCommandBuffer(state.WorldUnmanaged);
 
-            foreach (var (spawnData, localTransform, spawner) in SystemAPI.Query<SpawnData, ParticlePosition>().WithDisabled<ParticleTimer>().WithEntityAccess())
+            foreach (var (spawnData, particlePosition, localTransform, spawner) in SystemAPI.Query<SpawnData, ParticlePosition, LocalTransform>().WithDisabled<ParticleTimer>().WithEntityAccess())
             {
                 if (spawnData.Prefab1 == Entity.Null)
                 {
@@ -43,7 +44,12 @@ namespace Logic
                 var entities = new NativeArray<Entity>(spawnData.SpawnDirections.Length, Allocator.Temp, NativeArrayOptions.UninitializedMemory);
                 ecb.Instantiate(spawnData.Prefab1, entities.GetSubArray(0, entities.Length / 2));
                 ecb.Instantiate(spawnData.Prefab2, entities.GetSubArray(entities.Length / 2, entities.Length - entities.Length / 2));
-                foreach (Entity entity in entities)
+                foreach (var entity in entities)
+                {
+                    ecb.SetComponent(entity, particlePosition);
+                }
+
+                foreach (var entity in entities)
                 {
                     ecb.SetComponent(entity, localTransform);
                 }
